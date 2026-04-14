@@ -2,17 +2,15 @@ package client
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
+
+var _ = url.PathEscape
 
 const defaultBaseURL = "https://rest.websupport.sk"
 
@@ -74,22 +72,8 @@ func IsNotFound(err error) bool {
 	return false
 }
 
-func (c *Client) sign(method, endpoint string, ts int64) string {
-	canonical := fmt.Sprintf("%s %s %d", method, endpoint, ts)
-	mac := hmac.New(sha1.New, []byte(c.APISecret))
-	mac.Write([]byte(canonical))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
 func (c *Client) do(method, endpoint string, body interface{}, out interface{}) error {
-	ts := time.Now().Unix()
-	sig := c.sign(method, endpoint, ts)
-
-	q := url.Values{}
-	q.Set("timestamp", strconv.FormatInt(ts, 10))
-	q.Set("signature", sig)
-	q.Set("apikey", c.APIKey)
-	full := c.BaseURL + endpoint + "?" + q.Encode()
+	full := c.BaseURL + endpoint
 
 	var reqBody io.Reader
 	if body != nil {
@@ -104,11 +88,11 @@ func (c *Client) do(method, endpoint string, body interface{}, out interface{}) 
 	if err != nil {
 		return fmt.Errorf("new request: %w", err)
 	}
+	req.SetBasicAuth(c.APIKey, c.APISecret)
 	req.Header.Set("Accept", "application/json")
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http: %w", err)
