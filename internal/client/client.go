@@ -90,6 +90,7 @@ func (c *Client) do(method, endpoint string, body interface{}, out interface{}) 
 	}
 	req.SetBasicAuth(c.APIKey, c.APISecret)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Date", time.Now().UTC().Format(time.RFC1123))
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
