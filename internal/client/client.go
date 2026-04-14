@@ -2,6 +2,9 @@ package client
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,9 +91,17 @@ func (c *Client) do(method, endpoint string, body interface{}, out interface{}) 
 	if err != nil {
 		return fmt.Errorf("new request: %w", err)
 	}
-	req.SetBasicAuth(c.APIKey, c.APISecret)
+	// Websupport HMAC-SHA1 auth: signature over "{METHOD} {PATH} {UNIX_TS}",
+	// sent via Basic auth (username=apikey, password=hex(hmac)).
+	ts := time.Now().Unix()
+	canonical := fmt.Sprintf("%s %s %d", method, endpoint, ts)
+	mac := hmac.New(sha1.New, []byte(c.APISecret))
+	mac.Write([]byte(canonical))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	req.SetBasicAuth(c.APIKey, signature)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Date", time.Now().UTC().Format(time.RFC1123))
+	req.Header.Set("Date", time.Unix(ts, 0).UTC().Format(time.RFC1123))
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
