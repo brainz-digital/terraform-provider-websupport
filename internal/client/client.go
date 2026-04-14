@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -61,10 +62,18 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string {
+	parts := []string{fmt.Sprintf("websupport API error (%d)", e.HTTPStatus)}
 	if e.Message != "" {
-		return fmt.Sprintf("websupport API error (%d): %s", e.HTTPStatus, e.Message)
+		parts = append(parts, e.Message)
 	}
-	return fmt.Sprintf("websupport API error (%d): %s", e.HTTPStatus, e.Body)
+	if len(e.Errors) > 0 {
+		b, _ := json.Marshal(e.Errors)
+		parts = append(parts, fmt.Sprintf("errors=%s", string(b)))
+	}
+	if e.Body != "" {
+		parts = append(parts, fmt.Sprintf("body=%s", e.Body))
+	}
+	return strings.Join(parts, " | ")
 }
 
 // IsNotFound reports whether err represents a 404 from the Websupport API.
@@ -127,7 +136,9 @@ func (c *Client) do(method, endpoint string, body interface{}, out interface{}) 
 	return nil
 }
 
-// CreateRecord creates a DNS record in the given zone.
+// CreateRecord creates a DNS record in the given zone. The Websupport create
+// response omits the new record's id, so we list the zone afterwards to look
+// it up by (type, name, content).
 func (c *Client) CreateRecord(zone string, r Record) (*Record, error) {
 	endpoint := fmt.Sprintf("/v1/user/self/zone/%s/record", url.PathEscape(zone))
 	var resp struct {
@@ -137,7 +148,36 @@ func (c *Client) CreateRecord(zone string, r Record) (*Record, error) {
 	if err := c.do(http.MethodPost, endpoint, r, &resp); err != nil {
 		return nil, err
 	}
-	return &resp.Item, nil
+	if resp.Item.ID != 0 {
+		return &resp.Item, nil
+	}
+
+	all, err := c.ListRecords(zone)
+	if err != nil {
+		return nil, fmt.Errorf("created record but failed to look up id: %w", err)
+	}
+	// Walk newest-first (highest id) — the API does not guarantee order, so
+	// scan all entries and pick the highest matching id.
+	var match *Record
+	for i := range all {
+		rec := all[i]
+		if rec.Type == r.Type && rec.Name == r.Name && rec.Content == r.Content {
+			if match == nil || rec.ID > match.ID {
+				match = &all[i]
+			}
+		}
+	}
+	if match == nil {
+		return nil, fmt.Errorf("created record but could not find it in zone listing (type=%s name=%s content=%s)", r.Type, r.Name, r.Content)
+	}
+	// Preserve TTL/Note from request if API echoed defaults.
+	if match.TTL == 0 {
+		match.TTL = r.TTL
+	}
+	if match.Note == "" {
+		match.Note = r.Note
+	}
+	return match, nil
 }
 
 // GetRecord fetches a record by ID.
